@@ -1,0 +1,93 @@
+#!/bin/bash
+set -x 
+if [[ $# -ne 1 ]]; then
+    echo "Usage : ./README.realign nameForNN"
+    exit
+fi
+dir=$1
+# 1. generate gmmbypass from original HMM
+# --------------------------------------------
+
+# estimate state prior probability
+# cat ./lib/flists/train.scp | grep -v -f ../finetune/align_dnn/train.failedsegs | awk -F.plp= '{print $1".rec";}' | sort -u > train.reclist 
+# HLEd -X rec -I ../finetune/align_dnn/train.align.mlf -i train.mlf -S train.reclist /dev/null
+# cat train.mlf | awk 'NF>=3{num[$3]++;dur[$3]+=($2-$1)/1e5;if(num[$3]==1){nste++;ste[nste]=$3;}}END{for(i=1;i<=nste;i++) printf "+ %s\t%d\n",ste[i],dur[ste[i]];}' > state.frcnt
+# cat state.frcnt ../finetune/align/statemap | awk '$1=="+"{cnt[$2]=$3;}NF==2{dur[$2]+=cnt[$1];num[$2]++;if(num[$2]==1){idx++;name[idx]=$2;}}END{for(i=1;i<=idx;i++) printf "%s\t%d\n",name[i],dur[name[i]];}' | sort +0 -1 > clusteredstate.frcnt
+# cat clusteredstate.frcnt | awk '{idx++;name[idx]=$1;dur[idx]=$2;totaldur+=$2;}END{for(i=1;i<=idx;i++){printf "%s\t%f\n",name[i],2*log(dur[i]/totaldur);}}' | cat - ../finetune/dicts/dict | awk 'NF==2{pri[$1]=$2;}NF==1{printf "%s  %f\n",$1,pri[$1];}' > stateprior
+
+
+# ln -s ../../tools/
+# ln -s ../finetune/lib/ ./
+
+# get txt MMF
+# HHEd -H ../finetune/align/MMF -w MMF.txt /dev/null lib/mlists/tri.xwrd.cluster.list
+# mkdir hmm0
+# ./tools/fyc-gen_HTK_gmmbypass.sh MMF.txt stateprior hmm0/MMF.realign
+
+
+# 2. decode
+
+# for nn in tr_L0_L1_L2_L3_L4 tr_L0_L1_L2_L3_L4_L5 tr_L0_L1_L2_L3_L4_L5_L6 tr_L0_L1_L2_L3_L4_L5_L6_L7
+for nn in tr_L0_L1_L2_L3_L4_L5_L6
+do
+rm -r $dir
+mkdir -p $dir/hub5e
+cd $dir/hub5e
+ln -s ../../hmm0/MMF.realign MMF
+ln -s ../../global.transf.cmn global.transf
+if [[ ! -f ../../trained_nnets/${dir}.final ]]; then
+    echo file not exist
+    exit
+fi
+ln -s ../../trained_nnets/${dir}.final  nnet.final
+cp ../../hdecode.base.cfg.hub hdecode.cfg
+echo "FEATURETRANSFORM = $dir/hub5e/global.transf" >> hdecode.cfg
+echo "NEURALNETWORK    = $dir/hub5e/nnet.final"  >> hdecode.cfg
+cd ../../
+cat HTE.test.ch.eval.hub5e | sed "s=lib/cfgs/hdecode.fixed.user.cfg=$dir/hub5e/hdecode.cfg=g;" > $dir/hub5e/HTE.test.ch.eval
+jobid=$(./decodetools/submitdecode-lowP.sh $dir/hub5e/ $dir/hub5e/ch_eval $dir/hub5e/HTE.test.ch.eval | tail -1 | cut -d ' ' -f 3)
+qsub -cwd -P middle -sync y -hold_jid $jobid no-use.sh
+ ./result_hub5.sh $dir
+ echo hub5e >> $dir/decode_results
+ grep Sum/Avg $dir/hub5e/ch_eval/scoring/mlf.ctm.filt.sys >> $dir/decode_results
+ 
+ if [[ ! -d $dir ]]; then
+    echo dir not exist
+    exit
+ fi
+ mkdir -p $dir/rt03
+ cd $dir/rt03
+ ln -s ../../hmm0/MMF.realign MMF
+ ln -s ../../global.transf.cmn global.transf
+ ln -s ../../trained_nnets/${dir}.final  nnet.final
+ cp ../../hdecode.base.cfg.rt03 hdecode.cfg
+ echo "FEATURETRANSFORM = $dir/rt03/global.transf" >> hdecode.cfg
+ echo "NEURALNETWORK    = $dir/rt03/nnet.final"  >> hdecode.cfg
+ cd ../../
+ cat HTE.test.ch.eval.rt03 | sed "s=lib/cfgs/hdecode.fixed.user.cfg=$dir/rt03/hdecode.cfg=g;" > $dir/rt03/HTE.test.ch.eval
+ jobid=$(./decodetools/submitdecode-lowP.sh $dir/rt03/ $dir/rt03/ch_eval $dir/rt03/HTE.test.ch.eval | tail -1 | cut -d ' ' -f 3)
+ qsub -cwd -P middle -sync y -hold_jid $jobid no-use.sh
+ ./result_rt03.sh $dir
+ echo rt03 >> $dir/decode_results
+ grep Sum/Avg $dir/rt03/ch_eval/scoring/mlf.ctm.filt.sys >> $dir/decode_results
+ cat $dir/decode_results
+
+
+done
+
+# for nn in tr_L0_L1_L2_L3_L4_L5_L6
+# do
+# dir=tr_realign_cmn_rbm50
+# mkdir -p $dir/rt03
+# cd $dir/rt03
+# ln -s ../../hmm0/MMF.realign MMF
+# ln -s ../../global.transf.cmn global.transf
+# ln -s ../../nnet_tr_realign_cmn_rbm50  nnet.final
+# cp ../../hdecode.base.cfg.rt03 hdecode.cfg
+# echo "FEATURETRANSFORM = $dir/rt03/global.transf" >> hdecode.cfg
+# echo "NEURALNETWORK    = $dir/rt03/nnet.final"  >> hdecode.cfg
+# cd ../../
+# cat HTE.test.ch.eval.rt03 | sed "s=lib/cfgs/hdecode.fixed.user.cfg=$dir/rt03/hdecode.cfg=g;" > $dir/rt03/HTE.test.ch.eval
+# ./decodetools/submitdecode.sh $dir/rt03/ $dir/rt03/ch_eval $dir/rt03/HTE.test.ch.eval
+# done
+
