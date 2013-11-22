@@ -1,4 +1,5 @@
 #!/bin/bash
+#this scheduler will do 2 cv: cv and bp
 
 #threads were not specified, assume using CUDA
 if [[ ! $THREADS ]]; then
@@ -33,8 +34,10 @@ echo KEEP_LRATE_ITER: ${KEEP_LRATE_ITER:=0}
 echo END_HALVING_INC: ${END_HALVING_INC:=0.1}
 echo START_HALVING_INC: ${START_HALVING_INC:=0.5}
 echo HALVING_FACTOR: ${HALVING_FACTOR:=0.5}
+echo "==What's new?==="
 echo STILL_FINDING: ${STILL_FINDING:=0}
-
+echo SHUF: ${SHUF:=0}
+echo CVBP: ${CVBP:=0}
 
 #runs the training commad, parses the accuracy
 function run_tnet_parse_accu {
@@ -56,6 +59,11 @@ function run_tnet_parse_accu {
 
 if [ ! -d weights ]; then
   mkdir weights
+fi
+
+if [[ $SHUF == 1 ]]; then
+    SCP_TRAIN_LOCAL_ORI=$SCP_TRAIN_LOCAL
+    SCP_TRAIN_LOCAL=${SCP_TRAIN_LOCAL}-shuf
 fi
 
 nnet_base=weights/$(basename $NN_INIT .init)
@@ -82,11 +90,39 @@ cmd="$TNet $TNET_FLAGS -T $TRACE \
  ${CONFUSIONMODE:+--CONFUSIONMODE=$CONFUSIONMODE} \
  "
 
+cmd2="$TNet $TNET_FLAGS -T $TRACE \
+ -H $NN_INIT \
+ -I $MLF_CV \
+ -L '*/' -X lab \
+ -S $SCP_TRAIN_LOCAL \
+ --BUNCHSIZE=$BUNCHSIZE \
+ --CACHESIZE=$CACHESIZE \
+ --RANDOMIZE=FALSE \
+ --CROSSVALIDATE=TRUE \
+ --OUTPUTLABELMAP=$PHONELIST \
+ --STARTFRMEXT=$FRM_EXT \
+ --ENDFRMEXT=$FRM_EXT \
+ ${FEATURE_TRANSFORM:+--FEATURETRANSFORM=$FEATURE_TRANSFORM} \
+ ${STK_CONF:+-C $STK_CONF} \
+ ${THREADS:+--THREADS=$THREADS} \
+ ${CONFUSIONMODE:+--CONFUSIONMODE=$CONFUSIONMODE} \
+ "
+
+
+
 run_tnet_parse_accu "$cmd"
 accu_best=$ACCU
 nnet_best=$NN_INIT
-echo "Initial CV accuracy: $ACCU"\
+echo "Initial CV accuracy: $ACCU"
 
+if [[ $CVBP == 1 ]]; then
+     echo "########################################################"
+     echo "# INITIAL CROSSVAL_BP, $(date)"
+     echo "########################################################"
+     run_tnet_parse_accu "$cmd2"
+     accu_cvbp=$ACCU
+     echo "Initial CVBP accuracy : ${accu_cvbp}"
+fi
 
 lrate=$LEARNRATE
 if [ $THREADS ]; then #divide lrate so it is 
@@ -101,6 +137,10 @@ for iter in $(seq -w $MAX_ITER); do
   echo "# ITERATION:$iter, $(date)"
   echo "########################################################"
   nnet_next=${nnet_base}_iter$iter
+  if [[ $SHUF == 1 ]]; then
+      echo shufing training-scp...
+      shuf $SCP_TRAIN_LOCAL_ORI > $SCP_TRAIN_LOCAL
+  fi
   #run epoch
   cmd="$TNet $TNET_FLAGS -T $TRACE \
    -H $nnet_best \
@@ -157,8 +197,39 @@ for iter in $(seq -w $MAX_ITER); do
   echo "CV accuracy: $ACCU iter: $iter learnrate: $lrate"\
    ${MOMENTUM:+" momentum: $MOMENTUM"}\
    ${WEIGHTCOST:+" weightcost: $WEIGHTCOST"}
+  
+  if [[ $CVBP == 1 ]]; then
+    echo "########################################################"
+    echo "# CROSSVAL_BP:$iter, $(date)"
+    echo "########################################################"
+
+    cmd="$TNet $TNET_FLAGS -T $TRACE \
+   -H $nnet_next \
+   -I $MLF_CV \
+   -L '*/' -X lab \
+   -S $SCP_TRAIN_LOCAL \
+   --BUNCHSIZE=$BUNCHSIZE \
+   --CACHESIZE=$CACHESIZE \
+   --RANDOMIZE=FALSE \
+   --CROSSVALIDATE=TRUE \
+   --OUTPUTLABELMAP=$PHONELIST \
+   --STARTFRMEXT=$FRM_EXT \
+   --ENDFRMEXT=$FRM_EXT \
+   ${FEATURE_TRANSFORM:+--FEATURETRANSFORM=$FEATURE_TRANSFORM} \
+   ${STK_CONF:+-C $STK_CONF} \
+   ${THREADS:+--THREADS=$THREADS} \
+   ${CONFUSIONMODE:+--CONFUSIONMODE=$CONFUSIONMODE} \
+   "
+    run_tnet_parse_accu "$cmd"
+    accu_cvbp=$ACCU
+    echo "CVBP accuracy : ${accu_cvbp}"
+  fi
+ 
 
   nnet_next_accu=${nnet_next}_lr$(printf '%.5g' $lrate)_tr$(printf '%.5g' $accu_train)_cv$(printf '%.5g' $accu_cv)
+  if [[ $CVBP == 1 ]]; then
+    nnet_next_accu=${nnet_next_accu}_cvbp$(printf '%.5g' $accu_cvbp)
+  fi
   mv $nnet_next $nnet_next_accu
 
   # always accept the weights when fixed lrate by keep_lrate_iter
