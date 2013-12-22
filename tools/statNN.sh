@@ -7,6 +7,8 @@ fi
 
 MATLAB=${MATLAB:=1}
 SEEONORM=${SEEONORM:=1}
+SEEANORM=${SEEANORM:=1}
+SEEINORM=${SEEINORM:=1}
 TMPDIR=${TMPDIR:=tmp}
 RESDIR=${RESDIR:=results}
 DEBUG=${DEBUG:=0}
@@ -27,15 +29,15 @@ NAME=$(basename ${NN%%.*})
 echo name of NN : $NAME
 HiddenLB=$(( $(grep 'm ' $NN | wc -l) - 1 ))
 echo "Number of hidden layers : " $HiddenLB
-SS=$(grep 'm ' $NN | awk ' BEGIN { s=""; } { if (NR==1) s=s""$3; else s=s"_"$2; } END { print s } ')
+SS=$(grep 'm ' $NN | awk ' BEGIN { s=""; } { if (NR==1) s=s""$3"_"$2; else s=s"_"$2; } END { print s } ')
 echo "NN topology : " $SS
 Mnum=$(grep 'm ' $NN | awk ' BEGIN { sum = 0; } { sum = sum + $2 * $3; } END { print sum; } ')
 echo "Number of parameter in transformation Matrice : " $Mnum
 cat $NN | awk ' { if (NF==2 && $1=="v") printf("%s ", $0); else print $0; } ' > ${TMPDIR}/${NAME}.tmp
 
 cd ${TMPDIR}
-rm m?
-rm v?
+#rm m?
+#rm v?
 cat ${NAME}.tmp | awk ' BEGIN { mFile = "m"; vFile = "v"; mI = 0; vI = 0; } 
 	{ if ($1 == "m") {
 	 	mI = mI + 1;
@@ -74,6 +76,24 @@ if [[ $MATLAB == 1 ]]; then
                 onorm = [ onorm (sum(abs(mms{i})) / size(mms{i}, 1)) ];
             end
             save('../${RESDIR}/${NAME}-onorm.mat', 'onorm');
+        " >> domatlab.m
+    fi
+    if [[ $SEEANORM == 1 ]]; then
+        echo "
+            anorm = [];
+            for i=2:$(( $HiddenLB + 1 ))
+                anorm = [ anorm ( (sum(abs(mms{i})) / size(mms{i}, 1)) + (sum(abs(mms{i - 1})') / size(mms{i - 1}, 2)) )];
+            end
+            save('../${RESDIR}/${NAME}-anorm.mat', 'anorm');
+        " >> domatlab.m
+    fi
+    if [[ $SEEINORM == 1 ]]; then
+        echo "
+            inorm = [];
+            for i=2:$(( $HiddenLB + 1 ))
+                inorm = [ inorm ( (sum(abs(mms{i - 1})') / size(mms{i - 1}, 2)) )];
+            end
+            save('../${RESDIR}/${NAME}-inorm.mat', 'inorm');
         " >> domatlab.m
     fi
     matlab -nodesktop -nosplash -r "domatlab(); quit;"
