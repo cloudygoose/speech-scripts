@@ -25,7 +25,7 @@ fi
 mkdir -p $TMPDIR
 mkdir -p $RESDIR
 NN=$1
-NAME=$(basename ${NN%%.*})
+NAME=$(basename ${NN})
 echo name of NN : $NAME
 HiddenLB=$(( $(grep 'm ' $NN | wc -l) - 1 ))
 echo "Number of hidden layers : " $HiddenLB
@@ -68,6 +68,7 @@ if [[ $MATLAB == 1 ]]; then
         end 
         save('../${RESDIR}/${NAME}-mms.mat', 'mms'); 
         save('../${RESDIR}/${NAME}-vvs.mat', 'vvs'); 
+        normSparseThres = 0.02;
     " > domatlab.m
     if [[ $SEEONORM == 1 ]]; then
         echo "
@@ -75,6 +76,7 @@ if [[ $MATLAB == 1 ]]; then
             for i=2:$(( $HiddenLB + 1 ))
                 onorm = [ onorm (sum(abs(mms{i})) / size(mms{i}, 1)) ];
             end
+            fprintf('onorm sparse : %d\n', sum(onorm < normSparseThres));
             save('../${RESDIR}/${NAME}-onorm.mat', 'onorm');
         " >> domatlab.m
     fi
@@ -84,6 +86,8 @@ if [[ $MATLAB == 1 ]]; then
             for i=2:$(( $HiddenLB + 1 ))
                 anorm = [ anorm ( (sum(abs(mms{i})) / size(mms{i}, 1)) + (sum(abs(mms{i - 1})') / size(mms{i - 1}, 2)) )];
             end
+            fprintf('anorm sparse : %d\n', sum(anorm < (normSparseThres * 2) )); %anorm has 2 * Thres
+            fprintf('anorm sparse with thres + 0.01 : %d\n', sum(anorm < (normSparseThres * 2 + 0.01) ));
             save('../${RESDIR}/${NAME}-anorm.mat', 'anorm');
         " >> domatlab.m
     fi
@@ -93,6 +97,7 @@ if [[ $MATLAB == 1 ]]; then
             for i=2:$(( $HiddenLB + 1 ))
                 inorm = [ inorm ( (sum(abs(mms{i - 1})') / size(mms{i - 1}, 2)) )];
             end
+            fprintf('inorm sparse : %d\n', sum(inorm < normSparseThres));
             save('../${RESDIR}/${NAME}-inorm.mat', 'inorm');
         " >> domatlab.m
     fi
