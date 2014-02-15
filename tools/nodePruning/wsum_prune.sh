@@ -6,8 +6,8 @@ if [ $# -ne 2 ]; then
 fi
 
 #different from nodePrune, we prune the first pNumber of all nodes(not from each layer)
-nn=${1:nnet_tr_L0_L1_L2_L3WSPr5000%};
-pNumber=$2;
+nn=${1:nnet_tr_L0_L1_L2_L3WSPr5000}
+pNumber=$2
 lNumber=$(grep 'm ' nnet.final | wc -l)
 echo ===========now greping nnet.final===================
 grep 'm ' nnet.final

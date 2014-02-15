@@ -1,0 +1,68 @@
+#!/bin/tcsh
+#set verbose 
+
+# This shell script calls herest repeatedly to build a sequence
+# of model sets, each set in the sequence being 1 single embedded
+# reestimation of the previous
+#
+#     usage: hbuild fromN toN
+#
+# Example - hbuild 2 4  is equivalent to the sequence
+#               herest HTE hmm1 hmm2
+#               herest HTE hmm2 hmm3
+#               herest HTE hmm3 hmm4
+# Note that this script must be executed in the directory holding
+# hmm1, hmm2 etc.
+#
+# Copyright (c) Steve Young & Phil Woodland, 1992-97
+#   modified by Andrew Liu, Gunnar Evermann
+
+if ( $#argv < 3 || $#argv > 4 ) then
+   echo "usage: $0 hte fromN toN [<jwait>]"
+   exit 1
+endif
+
+if ( $#argv == 4 ) then
+    set jwait = $4
+endif
+
+if ( ! -e $1 ) then 
+   echo "cannot find HTE file $1" ; exit
+else
+   set HTEFile = $1
+endif
+
+# source /home/xhn/Workplace/tools/ears_env.csh
+set herest = /slfs3/users/yl710/tools/herest.codine
+
+
+echo "Job submission of $0 started at `date`" ##>> blog 
+set i=$2
+while ( $i <= $3 ) 
+   @ j = $i - 1
+   if ( -e hmm${i}/MMF ) then
+      echo "$0 trying to overwrite hmm${i}" #>> blog 
+      exit
+   endif
+   echo "Building hmm${i} from hmm${j}"  #>> blog 
+   
+   # from the second round of hlerest on 
+   if ( $i > $2 ) then
+      # get the last round hlerest's second pass job id
+      set execstr = `cat hmm${j}/herjobs2`
+      set PreJobNum = `echo $execstr | awk '{print $0}'`
+   endif
+ 
+   if ( $i == $2 ) then
+      if ( $#argv == 4 ) then
+         $herest $HTEFile hmm${j} hmm${i} $jwait < /dev/null
+      else
+         $herest $HTEFile hmm${j} hmm${i} < /dev/null
+      endif
+   else
+      $herest $HTEFile hmm${j} hmm${i} $PreJobNum < /dev/null
+   endif
+
+   @ i++
+end
+echo "Job submission of $0 finished at `date`"    #>> blog 

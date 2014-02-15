@@ -1,0 +1,28 @@
+#!/bin/bash
+
+if [ $# -ne 3 ]; then
+        echo "Usage: run.align HTE corpus dir"
+        exit
+fi
+
+HTE=$1
+corpus=$2
+dir=$3
+
+[ -d LOG ] || mkdir LOG
+
+tools=tools
+
+RUN_ARRAY_JOB=$tools/run-array-job.sh
+
+SIDELIST=lib/flists/${corpus}.sidelist
+
+HTEST=$tools/hvtest
+
+NJOBS=`wc -l $SIDELIST | gawk '{print $1}'`
+
+LOGFILE=LOG/run\$TASK_ID.LOG
+
+qsub -cwd -o $LOGFILE -j y -S /bin/bash -t 1-$NJOBS\
+   $RUN_ARRAY_JOB $SIDELIST \
+     ${HTEST} $HTE $corpus SET $dir

@@ -1,0 +1,39 @@
+#!/bin/bash
+set -x
+if [ $# -lt 3 -o $# -gt 4 ] ; then
+  echo "USAGE: run.align corpus dir logdir [HTE]"
+  exit 1
+fi
+
+
+corpus=$1
+dir=$2
+hte=$3
+logdir=$4
+
+[ -d $logdir ] || mkdir $logdir
+
+tooldir=/slfs3/users/yl710/tools
+
+RUN_ARRAY_JOB=$tooldir/run-array-job.sh
+
+HTEST=tools/hvtest
+
+SETLIST=$corpus
+NJOBS=`wc -l $SETLIST | gawk '{print $1}'`
+
+LOGFILE=$logdir/run\$TASK_ID.LOG
+
+if [ $# == 3 ];then
+    qsub -cwd -o $LOGFILE -j y -S /bin/bash -t 1-$NJOBS\
+   $RUN_ARRAY_JOB $SETLIST \
+     ${HTEST} HTEfiles/HTE.hv-align train SET $dir
+fi
+
+if [ $# == 4 ];then
+    qsub -cwd -sync y -o $LOGFILE -j y -S /bin/bash -t 1-$NJOBS\
+   $RUN_ARRAY_JOB $SETLIST \
+     ${HTEST} $hte train SET $dir
+fi
+
+

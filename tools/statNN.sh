@@ -1,6 +1,6 @@
 
 if [[ $# -ne 1 ]]; then
-    echo " [Input Error] : please give the NN to stat";
+    echo " Usage : statNN.sh NNfile";
     echo " ENVIR : MATLAB SEEONORM TMPDIR RESDIR DEBUG"
     exit;
 fi

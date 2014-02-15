@@ -1,0 +1,338 @@
+#!/bin/csh
+set verbose
+#---------------------------------------------------------------#
+# HTK Unix Shell Script: hvtest                                 #
+#                                                               #
+# Usage:  hvtest env type set hmmdir [tnum]                     #
+#                                                               #
+# hvtest uses the HTK environment settings to recognise the     #
+# specified set of test files.                                  #
+# type  is used to select a type of test condition from the     #
+# env file. set selects the test data independently of type.    #
+# The test results are stored in a directory called             #
+# test_type_set.k inside the source hmm directory hmmdir        #
+# where k is the  repetition idx.                               #
+# A copy of the env file containing the test parameters is left #
+#in the test directory (typically changed for different indexes)#
+# The shell variable TESTSET is set equal to set & is used to   #
+# specify the test data in the HTE file.                        #
+# Others variables in the HTE file are indexed to reflect       #
+# values with different type the different type in an order     #
+# given by the HTE variable TYPELIST                            #
+#                                                               #
+#  If tnum is given then hvtest is run in restart mode.         #
+#                                                               #
+# (A) Define Test Set                                           #
+#   SETLIST      - list of possible SET values                  #
+#   TESTLIST     - list of test filesets (.scp files)  [SET]    #
+#   TESTMLF      - MLF for reference labs (if used)  [SET]      #
+#                                                               #
+# (B) Define Test Conditions                                    #
+#   TYPELIST     - list of possible TYPE values                 #
+#   HRPRUNE      - pruning threshold (main beam) [TYPE]         #
+#   HRWEPRUNE    - word end pruning threshold [TYPE]            #
+#   HVMAXACTIVE  - HVite maximum number of active models [TYPE] #
+#   HVTOKENS     - HVite token number [TYPE]                    #
+#   HRGSCALE     - grammar scale factor [TYPE]                  #
+#   HRIMPROB     - inter-model log probability [TYPE]           #
+#   HRPRONPROB   - pronounciation probability scale factor      #
+#   HVVOCAB      - name of vocab file [TYPE]                    #
+#   HVLATDIR     - lattice directory (for rescoring)            #
+#                                                               #
+# (C) Miscellaneous Test Parameters                             #
+#   HVNAME       - name of recogniser (HVite)                   #
+#   HRHMMLIST    - list of models to use in testing             #
+#   HVLATEXTN    - set to generate lattices                     #
+#   HROUTDIR     - dir holding output mlf or lattices           #
+#   HVTRACE      - trace level                                  #
+#   NICE         - nice level to run at                         #
+#                                                               #
+#  Designed to be compatible/extend jtest HTE files where       #
+#  possible.                                                    #
+#                                                               #
+#  HV* names are HVite specific values and HR values would be   #
+#  shared with a jtest/lvxtext/hdtest HTE                       #
+#---------------------------------------------------------------#
+#
+# Copyright (c) Phil Woodland 1996-97
+# ky219, Feb. 2005, add adaptation xform support
+
+# Check Number of Args 
+if ( $#argv != 4 && $#argv != 5 ) then
+   echo "Usage: hvtest env tsttype tstset hmmdir [tnum]"
+   exit 1
+endif
+
+# Read the environment file
+if ( ! -f $1 ) then
+   echo "Cannot find environment file $1"
+   exit 1
+endif
+
+set TYPE=$2
+set SET=$3
+set TESTSET=$SET
+
+# Load in the environment file
+source $1
+
+
+# determine mode (test or align)
+
+if ( $?ALIGNMLF ) then          # align
+   set MODE=align
+   if ( $?NUMALIGN ) then
+    set ALIGNOPT=(-a -I $ALIGNMLF )
+   else
+    set ALIGNOPT=(-a -m -I $ALIGNMLF )
+   endif
+   if ( $?UTTERBOUND) then
+      set ALIGNOPT=($ALIGNOPT -b $UTTERBOUND )
+   endif
+else                            # test
+   set MODE=test
+endif
+
+# Check the type
+if (! $?TYPELIST) then
+   echo "hvtest: TYPELIST not set in HTE file"
+   exit
+endif
+unset INDEX
+set count=0
+foreach i ($TYPELIST)
+   @ count++
+   echo compare $i : $TYPE
+   if ($i == $TYPE) then
+      set INDEX=$count
+   endif
+end
+if (! $?INDEX) then
+   echo "hvtest: specified tsttype $TYPE not in HTE TYPELIST"   
+   exit
+endif
+
+# Check the test set
+unset setfound
+if (! $?SETLIST) then
+   echo "hvtest: SETLIST not set in HTE file"
+   exit
+endif
+foreach i ($SETLIST)
+   if ($i == $SET) then
+      set setfound
+   endif
+end
+if (! $?setfound) then
+   echo "hvtest: tstset $SET not in HTE SETLIST"   
+   exit
+endif
+
+# Check hmmsource Exists
+set HMMSOURCE=$4
+if ( ! -d $HMMSOURCE ) then
+   echo "hvtest: error - hmm directory $HMMSOURCE does not exist"
+   exit 1
+endif
+
+# Set test dir
+if ($#argv == 4) then
+   unset TESTDIRSET
+   set TESTEXTN=1
+   while (! $?TESTDIRSET)
+      set TESTDIR=$HMMSOURCE/"$MODE"_"$TYPE"_"$SET"."$TESTEXTN"
+      if ( ! -d $TESTDIR ) then
+         mkdir $TESTDIR
+         set TESTDIRSET
+      else
+         @ TESTEXTN++
+      endif
+   end
+else
+   set RESTART
+   set TESTEXTN=$5
+   set TESTDIR=$HMMSOURCE/"$MODE"_"$TYPE"_"$SET"."$TESTEXTN"
+   if ( ! -d $TESTDIR ) then
+      echo "hvtest: cannot restart test, $TESTDIR not found"
+      exit 1
+   endif
+endif
+
+# Define the file to log all output/errors to
+set LOG=$TESTDIR/LOG
+
+# Copy the test HTE file as a record
+if (! $?RESTART) then
+   cp $1 $TESTDIR/HTE
+endif
+
+# Set Script File and Options
+
+if (! -f $HMMSOURCE/MMF ) then
+   echo "Cannot find MMF file $HMMSOURCE/MMF"
+   exit 1
+endif
+#set SRCOPT = ( -H $HMMSOURCE/MMF -d $HMMSOURCE )
+set SRCOPT = ( -H $HMMSOURCE/MMF )
+
+set HROPFILE=$TESTDIR/"$TYPE"_"$SET".mlf
+
+if ($?RESTART) then
+   set ndone = `grep 'File: ' $LOG | wc -l `
+   unset HROPIDXSET
+   set HROPEXTN=1
+   while (! $?HROPIDXSET)
+      set HROPF=$HROPFILE.$HROPEXTN
+      if (!  -f $HROPF ) then
+         set HROPFILE=$HROPF
+         set HROPIDXSET
+      else
+         @ HROPEXTN++
+      endif
+   end
+   set nfile = `cat $TSCRIPT | wc -l`
+   @ n = $nfile - $ndone
+   set BT = `basename $TSCRIPT`
+   set NEWSCRIPT = $TESTDIR/$BT.$HROPEXTN
+   tail -$n $TSCRIPT > $NEWSCRIPT
+   set TSCRIPT =  $NEWSCRIPT
+endif
+
+set OPT = (-i $HROPFILE)
+
+set OPT = ( $OPT $SRCOPT -y rec )
+
+if ($?HVTRACE) then
+   set OPT = ($OPT -T $HVTRACE)
+endif
+
+if ($?HVCONFIG) then
+   set OPT = ($OPT -C $HVCONFIG)
+   if (! $?RESTART) then
+      cp $HVCONFIG $TESTDIR/config
+   endif
+endif
+
+# Add the indexed options
+
+if ($?HRPRUNE) then
+   set OPT = ($OPT -t $HRPRUNE[$INDEX])
+endif
+if ($?HRWEPRUNE) then
+   set OPT = ($OPT -v $HRWEPRUNE[$INDEX])
+endif
+if ($?HVMAXACTIVE) then
+   set OPT = ($OPT -u $HVMAXACTIVE[$INDEX])
+endif
+if ($?HVTOKENS) then
+   set OPT = ($OPT -n $HVTOKENS[$INDEX])
+endif
+if ($?HRGSCALE) then
+   set OPT = ($OPT -s $HRGSCALE[$INDEX])
+endif
+if ($?HRIMPROB) then
+   set OPT = ($OPT -p $HRIMPROB[$INDEX])
+endif
+if ($?HRMODELOUT) then
+   set OPT = ($OPT -m )
+endif
+
+if ($?HRADAPTDIREXTN) then
+   set OPT = ($OPT -J ${HMMSOURCE}/${HRADAPTDIREXTN}) then
+endif
+
+if ($?HRGLOBALVARDIREXTN) then
+   set OPT = ($OPT -N ${HMMSOURCE}/${HRGLOBALVARDIREXTN}) then
+endif
+
+if ( $?HRPRONPROB ) then
+    if ( $HRPRONPROB[$INDEX] != 0.0 ) then
+        set OPT = ($OPT -r $HRPRONPROB[$INDEX])
+    endif
+endif
+
+# add in -q options (should go in HTE
+if ($?HVLATOPOPTS) then
+    set OPT = ($OPT -q $HVLATOPOPTS) 
+endif
+
+if ($?HVLABOPOPTS) then
+    set OPT = ($OPT -o $HVLABOPOPTS) 
+endif
+
+if ($?MLLROPTS) then
+    set OPT = ($OPT -E $MLLROPTS) 
+endif
+
+if (! $?HVLATDIR) then
+   if (! $?ALIGNOPT ) then      # no LM needed for alignment
+     set LM=$HVLM[$INDEX]
+     set OPT = ($OPT -w $LM) # not really optional ...
+   endif 
+else
+   set OPT = ($OPT -w -L $HVLATDIR -X lat ) # doing lattice rescoring
+endif
+
+
+# add in alignment options
+if ($?ALIGNOPT) then
+   set OPT = ($OPT $ALIGNOPT)
+endif
+
+# Finally set the mandatory argument
+set VOCAB=$HVVOCAB[$INDEX]
+if (! -f $VOCAB) then
+   echo "hvtest: cannot find vocab file $VOCAB"
+   exit
+endif
+
+# set processor nice levels 
+  set PR=( )
+
+# -------------- Run Recogniser -----------------
+
+if ( $?HVNAME ) then
+   if ($?HVLATEXTN) then
+      # generate lattice mode
+      if (! $?HROUTDIR) then
+         set HROUTDIR=$TESTDIR/lattices
+      endif
+      if ( ! -d $HROUTDIR ) then
+         mkdir $HROUTDIR
+      endif
+      set OPT = ($OPT -l $HROUTDIR -z $HVLATEXTN)
+   endif  
+
+   if ($?RESTART) then
+      echo "" >> $LOG
+      echo "$HVNAME restarted at `date`"  >> $LOG
+   else
+      echo `date` \[ $HOST \] > $LOG
+      echo "$HVNAME started at `date`"  >> $LOG
+   endif
+
+   if ($?HRSPKRMASK) then
+      ( time $PR $HVNAME -h "$HRSPKRMASK" -A -D $OPT -S $TSCRIPT $VOCAB $HRHMMLIST ) >>& $LOG
+   else 
+     ( time $PR $HVNAME -A -D $OPT -S $TSCRIPT $VOCAB $HRHMMLIST ) >>& $LOG
+   endif
+
+   if ( $status != 0 ) then
+      echo "$HVNAME terminated abnormally at `date`" >> $LOG
+      echo "" >> $LOG 
+      exit $status
+   else
+      echo "$HVNAME finished at `date`" >> $LOG
+      echo "" >> $LOG
+   endif
+else
+   echo "No test program" >> $LOG
+   echo "" >> $LOG
+   exit 1
+endif
+
+echo "hvtest finished  at `date`" >> $LOG
+
+#---------------------------------------------------------------#
+#                   End of Script: hvtest                       #
+#---------------------------------------------------------------#

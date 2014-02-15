@@ -1,0 +1,152 @@
+#!/bin/tcsh
+#set verbose
+
+if ($#argv < 8 || $#argv > 9) then
+    echo "Usage: $0 HTEFile SrcMixNum TgtMixNum Queue NumReest MixStep lsf/ibm edfilebase [HHEdConfig]";
+    exit 
+endif
+
+set edfilebase = $8
+
+#source /home/xhn/Workplace/tools/ears_env.csh
+
+set hbuild = ./tools/hbuild.codine
+
+set HTEFile = $1
+set mix = $2
+set nummixes = $3
+set QUEUE = $4
+set numreest = $5
+set MixStep = $6
+set stack = $7
+
+if ($#argv == 9) then
+    set HHEdConfigFile = $9
+endif
+
+source $HTEFile
+
+if ( $?HEQPROJ ) then
+   set QPROJ = "-P $HEQPROJ"
+else
+   set QPROJ = ""
+endif
+
+if ( $?HEQUEUE ) then
+   set QPROJ = ( $QPROJ "-l $HEQUEUE" )
+endif
+
+if ( ! $?HHEDPROG ) then
+   set HHEDPROG = /slfs2/users/yl710/htk/HTKTools/HHEd
+endif
+
+if (! -d hmm${mix}0 && ${mix} > 0 && ! -d hmm${mix}${numreest} ) then
+    echo "Source dir hmm${mix}0 or hmm${mix}${numreest} does not exist!";
+    exit
+endif
+
+while ( $mix < $nummixes )
+    
+      # next hbuild depends on the previous HHEd
+      if ( $mix > $2 ) then
+         $hbuild $HTEFile "${mix}1" "${mix}${numreest}" $HHEdJobNum
+      else
+         if ( $mix == 0 ) then
+            if ( ! -d hmm${numreest} ) then
+                set RunMoreIter = TRUE
+                ${hbuild} $HTEFile "1" "${numreest}"
+            else
+                set RunMoreIter = FALSE
+            endif
+         else
+            if ( ! -d hmm${mix}${numreest} ) then                
+                set RunMoreIter = TRUE
+                ${hbuild} $HTEFile "${mix}1" "${mix}${numreest}"   
+            else 
+                set RunMoreIter = FALSE
+            endif            
+         endif
+      endif
+
+      set RemoveHMMs = ()
+      
+      if ( $mix > 0 ) then
+        @ j = 0
+      else
+        @ j = 1
+      endif
+
+      while ( $j < ${numreest} )
+        if ( $mix == 0 ) then
+            set RemoveHMMs = ( $RemoveHMMs hmm${j} )
+        else
+            set RemoveHMMs = ( $RemoveHMMs hmm${mix}${j} )
+        endif
+        @ j++
+      end  
+
+      if ( $mix == 1) then
+        @ nmix = 2
+      else
+        @ nmix = $mix + $MixStep
+      endif
+      if ( $mix == 0 ) then
+        set src = ${numreest}
+      else 
+        set src = ${mix}${numreest}
+      endif
+
+      set tgt = ${nmix}0
+
+      mkdir hmm${tgt}
+
+      # get the last hlbuild's final round hlerest's second pass job id
+      if ( $mix == 0 ) then
+        set execstr = `cat hmm${numreest}/herjobs2`
+      else
+        if ( $mix > $2 || ( $mix == $2 && $RunMoreIter == TRUE ) ) then
+            set execstr = `cat hmm${mix}${numreest}/herjobs2`
+        else
+            set execstr = ""
+        endif
+      endif
+
+      set PreJobNum = `echo $execstr | awk '{print $0}'`
+
+      # make the HHEd script file and get the job id for it
+      set HHEdBat = hmm${tgt}/hhed.mu.${nmix}.bat
+      set HHEdLog = hmm${tgt}/hhed.mu.${nmix}.log
+      touch $HHEdLog
+      if ($#argv == 9) then
+          echo "$HHEDPROG -A -C $HHEdConfigFile -D -T 1 -H hmm$src/MMF -M hmm$tgt $edfilebase/edfile.mu.${nmix} $HMMLIST > $HHEdLog" > $HHEdBat
+      else
+          echo "$HHEDPROG -A -D -T 1 -H hmm$src/MMF -M hmm$tgt $edfilebase/edfile.mu.${nmix} $HMMLIST > $HHEdLog" > $HHEdBat  
+      endif
+      
+#      if ( $mix > $2 || ( $mix == $2 && $RunMoreIter == TRUE ) ) then
+#        echo "rm -fr ${RemoveHMMs}" >> $HHEdBat
+#      endif
+
+      chmod +x $HHEdBat
+
+      # the HHEd script file depends on the last hlbuild's final round hlerest's second pass job's completion
+      if ( $stack == "ibm" ) then
+        if ( $mix > $2 || ( $mix == $2 && $RunMoreIter == TRUE ) ) then
+            set execstr = `qsub -cwd $QPROJ -hold_jid $PreJobNum -o $HHEdLog -j y $HHEdBat`
+        else
+            set execstr = `qsub -cwd $QPROJ -o $HHEdLog -j y $HHEdBat`
+        endif
+        set HHEdJobNum = `echo $execstr | awk '{print $3}'`
+      else
+        if ( $mix > $2 || ( $mix == $2 && $RunMoreIter == TRUE ) ) then
+            set execstr = `bsub -q $QUEUE -w "done($PreJobNum)" -o $HHEdLog -e $HHEdLog $HHEdBat`
+        else
+            set execstr = `bsub -q $QUEUE -o $HHEdLog -e $HHEdLog $HHEdBat`
+        endif
+        set HHEdJobNum = `echo $execstr | awk '{print $2}' | awk -F\< '{print $2}' | awk -F\> '{print $1}'`
+      endif
+
+      @ mix = $nmix
+end
+
+${hbuild} $HTEFile "${mix}1" "${mix}${numreest}" $HHEdJobNum 
